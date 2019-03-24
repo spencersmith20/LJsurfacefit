@@ -4,6 +4,7 @@ cp2k-template.slurm			modified template for non-periodic SPE calcs
 energy-geoopt.inp			non-periodic CP2K parameters file
 filecreate_non.py			generates n concatenated xyz files periodic) with randomized molecular orientation in a specified window of z values, .txt on box dimensions, .txt on each 	numbered system name
 filecreate_periodic.py			generates n concatenated xyz files (non-periodic) with randomized molecular orientation in a specified window of z values, .txt on radial distances, .txt on 	each numbered system name
+fit.py					temporary least squares solver for energies
 graphene.cif				cif file used for periodic calcs
 graphene.xyz				graphene input file used for non-periodic testing
 periodic.inp				periodic CP2K parameters file
