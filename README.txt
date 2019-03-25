@@ -7,6 +7,7 @@ filecreate_periodic.py			generates n concatenated xyz files (non-periodic) with 
 fit.py					temporary least squares solver for energies
 graphene.cif				cif file used for periodic calcs
 graphene.xyz				graphene input file used for non-periodic testing
+leastsquare.py				fitting script that calculates energies between the surface and the m bodies in the molecule. refines parameters using a nonlinear least sqaures algorithm 
 periodic.inp				periodic CP2K parameters file
 scrape.sh				scrapes energies from each energy .out file to create energies.txt file with trial number, radial distance, and SPE result **REQUIRES "PROJNAME" (see below)
 setslurm_non.sh				move each generated .xyz file into system folder with needed input files and submit job to cluster **REQUIRES DESIRED "PROJNAME" i.e. "sotolon" for a cp2k result of "sotolon-energy-run.out"
