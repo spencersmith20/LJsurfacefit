@@ -16,15 +16,54 @@ def distance_between_coords(p1, p2):
 def lennard_jones(r, eps, sig):
     return 4 * eps * ((sig/r)**12 - (sig/r)**6)
 
+#for each configuration of the molecule, calculate total E and find residual
+def get_residuals(dir_list, V, epsilon, sigma, m):
+
+    energies = []; residuals = []
+    for dir in dir_list:
+
+        #move into particular folder
+        chdir(dir)
+
+        #get appropriate coordinates
+        df = pd.read_csv(dir + '.xyz', header=2, names=['type', 'x', 'y', 'z'], sep='\s+')
+        coords = df[['x', 'y', 'z']]; types = df['type']
+        surf_z = coords['z'].iloc[0]; n = len(coords['z'])
+
+        #separates molecule and surface by checking z coordinate
+        for i in range(n):
+            if df['z'].iloc[i] != surf_z:
+                surf_coords = coords.iloc[:i,:]; mol_coords = coords.iloc[i:,:]
+                surf_types = types.iloc[:i]; mol_types = types.iloc[i:]; break
+
+        #create Atoms objects for surface and molecule
+        surf = Atoms(positions=surf_coords.values, symbols=surf_types.values)
+        mol = Atoms(positions=mol_coords.values, symbols=mol_types.values)
+
+        #list for iteration of energies. m is number of bodies interaction (currently dealing with sphere approximation)
+        atoms = mol.get_center_of_mass() + surf.positions
+
+        #get the sum squared error for this set of parameters
+        energies.append(get_energy(epsilon, sigma, atoms, m))
+
+        #go into bulk directory
+        chdir('..')
+
+    #get residuals for each configuration
+    for i, energ in enumerate(energies):
+        residuals.append((energ - v[i])**2)
+    return [energies, residuals]
+
 #calculate all atom-atom energies outside of the cutoff. self-interaction in molecule is excluded
 def get_energy(epsilon, sigma, atoms, m):
     E = [];
-    for i in range(len(atoms)):
-        p1 = atoms[i]; e = []
+    for i, p1 in enumerate(atoms):
+        e = []
 
         #calculate p1's interactions with p2 thru pn, then increment p1 to p2, dealing with p3 thru pn
-        for j in range(i+1,len(atoms)):
-            p2 = atoms[j]; r = distance_between_coords(p1, p2)
+        for j, p2 in enumerate(atoms[(i+1):]):
+
+            r = distance_between_coords(p1, p2)
             if r > 10: #cut-off
                 continue;
 
@@ -39,9 +78,11 @@ def get_energy(epsilon, sigma, atoms, m):
     #return summed energy of configuration
     return(sum(E))
 
+## begin main ##
+
 #load files
-xyz_file = open('filenames.txt'); xyz = [line.strip('\n') for line in xyz_file.readlines()]
-xyz_file.close()
+files = open('filenames.txt'); dirs = [line.strip('\n') for line in files.readlines()]
+files.close()
 
 #initial guesses
 sot_eps = 1e-7; sot_sig = 1
@@ -54,36 +95,4 @@ energy_file = open('energies.txt')
 v = [float(line.strip('\n').split('\t')[2]) for line in energy_file.readlines()]
 energy_file.close()
 
-#for each configuration of the molecule, calculate total E and find residual
-energies = []; m = 1
-for dir in xyz:
-
-    #move into particular folder
-    chdir(dir)
-
-    #get appropriate coordinates
-    df = pd.read_csv(dir + '.xyz', header=2, names=['type', 'x', 'y', 'z'], sep='\s+')
-    surf_z = df.iloc[0,3]; n = len(df.iloc[:,0])
-
-    #separates molecule and surface by checking z coordinate
-    for i in range(n):
-        if df.iloc[i, 3] != surf_z:
-            surf_df = df.iloc[:i,:]; mol_df = df.iloc[i:,:]; break
-
-    #create Atoms objects for surface and molecule
-    surf = Atoms(symbols=surf_df.iloc[:,0].values, positions=surf_df.iloc[:,1:].values)
-    mol = Atoms(symbols=mol_df.iloc[:,0].values, positions=mol_df.iloc[:,1:].values)
-
-    #list for iteration of energies. m is number of bodies interaction (currently dealing with sphere approximation)
-    atoms = mol.get_center_of_mass() + surf.positions
-
-    #get the sum squared error for this set of parameters
-    energies.append(get_energy(mix_eps, mix_sig, atoms, m))
-
-    #go into bulk directory
-    chdir('..')
-
-#get residuals for each configuration
-residuals = []
-for i in range(len(v)):
-    residuals.append((energies[i] - v[i])**2)
+m = 1; [energies, residuals] = get_residuals(dirs, v, mix_eps, mix_sig, m)
