@@ -1,8 +1,7 @@
-from numpy import linspace, power, random, inf, asarray
-import pandas as pd
-from math import sqrt
-from ase import Atoms
-from os import chdir
+from numpy import linspace, power, random, inf, asarray, absolute
+from pandas import read_csv; from math import sqrt
+from ase import Atoms; from os import chdir
+from sympy import symbols, diff, zeros
 
 #calculated / look-up values
 sotolon_vac = -86.96520401259681; graphene_vac = -305.49689755541885
@@ -19,14 +18,14 @@ def lennard_jones(r, eps, sig):
 #for each configuration of the molecule, calculate total E and find residual
 def get_residuals(dir_list, V, epsilon, sigma, m):
 
-    energies = []; residuals = []
+    energies = []; residual = 0
     for dir in dir_list:
 
         #move into particular folder
         chdir(dir)
 
         #get appropriate coordinates
-        df = pd.read_csv(dir + '.xyz', header=2, names=['type', 'x', 'y', 'z'], sep='\s+')
+        df = read_csv(dir + '.xyz', header=2, names=['type', 'x', 'y', 'z'], sep='\s+')
         coords = df[['x', 'y', 'z']]; types = df['type']
         surf_z = coords['z'].iloc[0]; n = len(coords['z'])
 
@@ -49,10 +48,10 @@ def get_residuals(dir_list, V, epsilon, sigma, m):
         #go into bulk directory
         chdir('..')
 
-    #get residuals for each configuration
+    #get total residual (sum from each config)
     for i, energ in enumerate(energies):
-        residuals.append((energ - v[i])**2)
-    return [energies, residuals]
+        residual = residual + (energ - v[i])**2
+    return residual
 
 #calculate all atom-atom energies outside of the cutoff. self-interaction in molecule is excluded
 def get_energy(epsilon, sigma, atoms, m):
@@ -84,15 +83,44 @@ def get_energy(epsilon, sigma, atoms, m):
 files = open('filenames.txt'); dirs = [line.strip('\n') for line in files.readlines()]
 files.close()
 
-#initial guesses
+#initial guesses, initializations
 sot_eps = 1e-7; sot_sig = 1
+max_attempts = 300; resid = []
 
-# mixing rules for LJ parameters
-mix_eps = sot_eps * carbon_eps; mix_sig = (sot_sig + carbon_sig) / 2
+for k in range(max_attempts):
 
-#read energies
-energy_file = open('energies.txt')
-v = [float(line.strip('\n').split('\t')[2]) for line in energy_file.readlines()]
-energy_file.close()
+    # mixing rules for LJ parameters
+    mix_eps = sot_eps * carbon_eps; mix_sig = (sot_sig + carbon_sig) / 2
 
-m = 1; [energies, residuals] = get_residuals(dirs, v, mix_eps, mix_sig, m)
+    #read energies
+    energy_file = open('energies.txt')
+    v = [float(line.strip('\n').split('\t')[2]) for line in energy_file.readlines()]
+    energy_file.close()
+
+    #calculate residuals for each configuration
+    m = 1; resid.append(get_residuals(dirs, v, mix_eps, mix_sig, m))
+
+    if k > 0:
+
+        #check for parameter convergence
+        conv_criteria = absolute((resid[k-1] - resid[k])/resid[k-1])
+        if conv_criteria < 0.0001:  #convergence achieved
+            print('epsilon: ' + str(epsilon) + '\tsigma: ' + str(sigma))
+            break
+
+    #else, continue algorithm ...
+
+    #declare symbols (variables ... x0 epsilon, x1 sigma)
+    x = symbols('x0:2'); r = symbols('r')
+
+    #declare function of variables and radius
+    f = -4 * x[0] * ((x[1]/r)**12 - (x[1]/r)**6)
+
+    #empty array to assembl jacobian matrix
+    J = zeros(len(f), len(x))
+
+    #fill in jacobian matrix
+    for i, fi in enumerate(f):
+        for j, s in enumerate(x):
+            J[i,j] = diff(fi, s)
+    print(J)
