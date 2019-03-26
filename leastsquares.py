@@ -16,8 +16,10 @@ def lennard_jones(r, eps, sig):
     return 4 * eps * ((sig/r)**12 - (sig/r)**6)
 
 #for each configuration of the molecule, calculate total E and find residual
-def get_residuals(dir_list, V, epsilon, sigma, m):
+def get_residuals(dir_list, V, x, m):
+    print('r')
 
+    [epsilon, sigma] = x
     energies = []; residual = 0
     for dir in dir_list:
 
@@ -84,22 +86,25 @@ files = open('filenames.txt'); dirs = [line.strip('\n') for line in files.readli
 files.close()
 
 #initial guesses, initializations
-sot_eps = 1e-7; sot_sig = 1
 max_attempts = 300; resid = []
+
+#declare symbols (variables ... x0 epsilon, x1 sigma)
+x = symbols('x0:2'); r = symbols('r'); x = [1e-7, 1]
+
+#declare function of variables and radius
+f = -4 * x[0] * ((x[1]/r)**12 - (x[1]/r)**6)
+
+#read energies
+energy_file = open('energies.txt')
+v = [float(line.strip('\n').split('\t')[2]) for line in energy_file.readlines()]
+energy_file.close()
 
 for k in range(max_attempts):
 
-    # mixing rules for LJ parameters
-    mix_eps = sot_eps * carbon_eps; mix_sig = (sot_sig + carbon_sig) / 2
-
-    #read energies
-    energy_file = open('energies.txt')
-    v = [float(line.strip('\n').split('\t')[2]) for line in energy_file.readlines()]
-    energy_file.close()
-
     #calculate residuals for each configuration
-    m = 1; resid.append(get_residuals(dirs, v, mix_eps, mix_sig, m))
+    m = 1; resid.append(get_residuals(dirs, v, x, m))
 
+    #need to check previous k, so k > 0 required
     if k > 0:
 
         #check for parameter convergence
@@ -108,19 +113,12 @@ for k in range(max_attempts):
             print('epsilon: ' + str(epsilon) + '\tsigma: ' + str(sigma))
             break
 
-    #else, continue algorithm ...
-
-    #declare symbols (variables ... x0 epsilon, x1 sigma)
-    x = symbols('x0:2'); r = symbols('r')
-
-    #declare function of variables and radius
-    f = -4 * x[0] * ((x[1]/r)**12 - (x[1]/r)**6)
-
-    #empty array to assembl jacobian matrix
-    J = zeros(len(f), len(x))
+    #empty array to assemble jacobian matrix
+    J = zeros(len(x))
 
     #fill in jacobian matrix
-    for i, fi in enumerate(f):
-        for j, s in enumerate(x):
-            J[i,j] = diff(fi, s)
+    for j, s in enumerate(x):
+        J[j] = diff(f, s)
     print(J)
+
+# use mixing rules to extract sotolon sigma and epsilon at the end
