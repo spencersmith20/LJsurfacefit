@@ -1,7 +1,7 @@
 from numpy import linspace, power, random, inf, asarray, absolute
 from pandas import read_csv; from math import sqrt
-from ase import Atoms; from os import chdir
-from sympy import symbols, diff, factor, Matrix; from numpy.linalg import inv
+from ase import Atoms; from os import chdir; from tqdm import tqdm
+from sympy import symbols, diff, factor, Matrix, zeros; from numpy.linalg import inv
 
 #calculated / look-up values
 sotolon_vac = -86.96520401259681; graphene_vac = -305.49689755541885
@@ -12,13 +12,13 @@ sotolon_pervac = -86.96759558341823; graphene_pervac = -7.39805875741705
 def distance_between_coords(p1, p2):
     return sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2 + (p1[2] - p2[2])**2)
 
-#for each configuration of the molecule, calculate total E and find residual
-def get_obj_func(dir_list, v, m, f):
+#for each configuration of the molecule, calculate total E then find residual
+def get_obj_funcs(dir_list, v, b, f):
 
     #define initial residual to be added for each .xyz file
-    residual = 0; print(str(len(dir_list)))
+    residual = []
 
-    for j, dir in enumerate(dir_list):
+    for j, dir in enumerate(tqdm(dir_list, leave=False)):
 
         #move into particular folder
         chdir(dir)
@@ -42,9 +42,7 @@ def get_obj_func(dir_list, v, m, f):
         atoms = mol.get_center_of_mass() + surf.positions
 
         #get the sum squared error for this set of parameters
-        residual = residual + (1/2)*(v[j] - get_energy(f, atoms, m))**2
-
-        print('j = ' + str(j))
+        residual.append((1/2)*(v[j] - get_energy(f, atoms, b))**2)
 
         #go into bulk directory
         chdir('..')
@@ -52,25 +50,22 @@ def get_obj_func(dir_list, v, m, f):
     return residual
 
 #calculate all atom-atom energies outside of the cutoff. self-interaction in molecule is excluded
-def get_energy(f, atoms, m):
-
+def get_energy(f, atoms, b):
     E = 0
     for i, p1 in enumerate(atoms):
 
         #calculate p1's interactions with p2 thru pn, then increment p1 to p2, dealing with p3 thru pn
         for j, p2 in enumerate(atoms[(i+1):]):
-            dist = distance_between_coords(p1, p2)
 
+            dist = distance_between_coords(p1, p2)
             if dist > 6: #cut-off
                 continue;
 
-            if i < m: # deal with sotolon-carbon interaction ... will need to deal with an array of parameters
+            if i < b: # deal with sotolon-carbon interaction ... will need to deal with an array of parameters
                 E = E + f.subs(r, dist)
             else: # deal with carbon-carbon interaction
                 E = E + f.subs([(r, dist), (eps, carbon_eps), (sig, carbon_sig)])
     return E
-
-## begin main ##
 
 #load files
 files = open('filenames.txt'); dirs = [line.strip('\n') for line in files.readlines()]
@@ -86,39 +81,42 @@ f = -4 * eps * ((sig/r)**12 - (sig/r)**6)
 #read energies
 energy_file = open('energies.txt')
 v = [float(line.strip('\n').split('\t')[2]) for line in energy_file.readlines()]
-energy_file.close(); m = 1
+energy_file.close(); b = 1
 
-#find objective function to be minimized -- this takes forever
-obj = get_obj_func(dirs, v, m, f)
-obj = factor(obj)
+#size of Jacobian matrix -- m is # objective functions, n is # params
+m = len(v); n = 2
 
-print('we out here we past the objective function yeet yeet yet')
+#find objective function to be minimized -- this is extremely time limiting
+obj = Matrix(1, m, [factor(o) for o in get_obj_funcs(dirs, v, b, f)]).T
 
-#create in jacobian matrix
-Jt = Matrix([f.diff(eps), f.diff(sig)])
-J = Jt.T
+#fill in Jacobian matrix
+J = Matrix(m, n, [factor(diff(o, s)) for o in obj for s in [eps, sig]])
+Jt = J.T
 
 #define initial guesses for (epsilon, sotolon) parameter pair -- stored as tuple
 params = [(1e-7, 2.5)]
 
+#calculate moore-penrose pseudo-inverse
+print(J.shape); print(Jt.shape)
+a = Jt * J;
+
 for k in range(max_attempts):
 
     #extract parameters
-    print('uh beginning of loop'); x = params[k]
+    print('beginning of loop'); x = params[k]
 
-    #substitute parameters into jacobian, transpose, and residual
-    #J_sub, Jt_sub, obj_sub = [m.subs([(eps, x[0]), (sig, x[1])]) for m in [J, Jt, obj]]
+    #make substitutions into symbolic matrix, calculate inverse of Jt * J
+    ap = a.subs([(eps, x[0]), (sig, x[1])]); a_inv = ap**-1
 
-    #calculate moore-penrose pseudo-inverse
-    #MPPI = ((Jt_sub * J_sub)**-1) * Jt_sub; print(MPPI)
+    #calculate Moore-Penrose pseudoinverse, make substitutions, calcualte delta
+    Jtp, resid = [ma.subs([(eps, x[0]), (sig, x[1])]) for ma in [Jt, obj]]
+    MPPI = a_inv * Jtp; delta = MPPI * resid
 
-    MPPI = ((Jt * J)**-1) * Jt; print(MPPI)
-    delta = MPPI * obj; print(delta)
-    delta.sub([(eps, x[0]), (sig, x[1])])
+    #need to do some sort of line search here to find the amount to go this direction
+    #implement levenberg-marquardt addition
 
-    #calcualte delta for params, increment & append
-    new_params = (x[0] + delta[0], x[1] + delta[1]); params.append(new_params)
-
+    #increment & append
+    new_params = (x[0] - delta[0], x[1] - delta[1]); params.append(new_params)
     print('we made it'); print(params)
 
     new_resid = obj.subs([(eps, new_params[0]), (sig, new_params[1])])
@@ -128,9 +126,10 @@ for k in range(max_attempts):
     conv_criteria = absolute((resid - new_resid)/resid)
     print(conv_criteria)
 
+    #is this best way to track convergence? this is m-dimensional (# files)
     if conv_criteria < 0.0001:  #convergence achieved
         print('epsilon: ' + str(new_params[0]) + '\tsigma: ' + str(new_params[1]))
         break
-    print('uh end of loop')
+    print('end of loop')
 
 # use mixing rules to extract sotolon sigma and epsilon at the end
