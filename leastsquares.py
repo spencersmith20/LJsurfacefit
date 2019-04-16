@@ -1,11 +1,9 @@
-from numpy import linspace, power, random, inf, asarray, absolute, shape
-from pandas import read_csv; from math import sqrt
-from ase import Atoms; from os import chdir; from tqdm import tqdm
-from sympy import symbols, diff, factor, Matrix, zeros; from numpy.linalg import inv
-import matplotlib.pyplot as plt
+import numpy as np; import sympy as sp; from numpy.linalg import inv
+from pandas import read_csv; from math import sqrt; from ase import Atoms
+from os import chdir; import matplotlib.pyplot as plt
 
 #calculated / look-up values
-sotolon_vac = -86.96520401259681; graphene_vac = -305.49689755541885
+sotolon_vac = -86.96520401259681; graphene_vac = -305.49689755541885; methane_vac = -8.07599867375029
 carbon_sig = 3.55; carbon_eps = 0.066 / 627.509 #kcal/mol -> Hartree
 sotolon_pervac = -86.96759558341823; graphene_pervac = -7.39805875741705
 
@@ -19,7 +17,7 @@ def get_obj_funcs(dir_list, v, b, f):
     #define initial residual to be added for each .xyz file
     residual = []; surf_E = 0; energ = []
 
-    for j, dir in enumerate(tqdm(dir_list, leave=False)):
+    for j, dir in enumerate(dir_list):
 
         #move into particular folder
         chdir(dir)
@@ -94,35 +92,36 @@ files.close()
 
 #declare symbols (variables ... x0 epsilon, x1 sigma), max attempts
 max_attempts = 300
-eps, sig, r = symbols("eps sig r")
+eps, sig, r = sp.symbols("eps sig r")
 
 #declare function of variables and radius
-f = -4 * eps * ((sig/r)**12 - (sig/r)**6); b = 1
+f = 4 * eps * ((sig/r)**12 - (sig/r)**6); b = 1
 
 #read energies and radii
 energy_file = open('energies.txt'); v = []; rad = []; lines = energy_file.readlines()
 r_list = [float(l.strip('\n').split('\t')[1]) for l in lines]
-e_list = [(float(l.strip('\n').split('\t')[2]) - sotolon_vac - graphene_vac) / 27.2114 for l in lines]
+e_list = [(float(l.strip('\n').split('\t')[2]) - methane_vac - graphene_vac) / 27.2114 for l in lines]
+
+st_dev = np.std(np.array(e_list).astype(np.float64))
+avg = np.average(np.array(e_list).astype(np.float64))
+
+plt.plot(r_list, e_list, 'go'); plt.show()
 
 #filter out non-LJ regions
-energy_file.close(); e_min = min(e_list); directories = []; print(e_min)
-for i, vv in enumerate(e_list):
-    if vv < -0.007:
-
-        #remove high E systems from consideration
-        v.append(vv); directories.append(dirs[i]); rad.append(r_list[i])
-
-#plot potential curve
-plt.plot(rad, v, 'go'); plt.show()
+energy_file.close(); directories = []; rad = []; v = []
+for i, V in enumerate(e_list):
+    if (avg - st_dev*.6 <= V <= avg + st_dev*.4):
+        rad.append(r_list[i]); v.append(V); directories.append(dirs[i])
+plt.plot(rad, v, 'bo'); plt.show()
 
 #size of Jacobian matrix -- m is # objective functions, n is # params
 m = len(v); n = 2
 
 #find objective function to be minimized -- this is extremely time limiting
-obj = Matrix(1, m, factor(get_obj_funcs(directories, v, b, f))).T
-print(obj)
+obj = sp.Matrix(1, m, sp.factor(get_obj_funcs(directories, v, b, f))).T
+
 #fill in Jacobian matrix
-J = Matrix(m, n, [factor(diff(o, s)) for o in obj for s in [eps, sig]]); Jt = J.T
+J = sp.Matrix(m, n, [sp.factor(sp.diff(o, s)) for o in obj for s in [eps, sig]]); Jt = J.T
 
 #define initial guesses for (epsilon, sotolon) parameter pair -- stored as tuple
 params = [(1e-5, 5.3)]
@@ -132,36 +131,30 @@ a = Jt * J
 
 for k in range(max_attempts):
 
-    #extract parameters
-    print('beginning of loop'); x = params[k]
-
-    #make substitutions into symbolic matrix, calculate inverse of Jt * J
-    ap = a.subs([(eps, x[0]), (sig, x[1])]);
-    print(ap); a_inv = ap**-1
+    x = params[k]
+    ap = a.subs([(eps, x[0]), (sig, x[1])]); a_inv = ap**-1
 
     #calculate Moore-Penrose pseudoinverse, make substitutions, calcualte delta
     Jtp, obj_sub = [ma.subs([(eps, x[0]), (sig, x[1])]) for ma in [Jt, obj]]
-    MPPI = a_inv * Jtp; delta = MPPI * obj_sub
+    MPPI = a_inv * Jtp; delta = MPPI * obj_sub; new_params = []
 
-    #need to do some sort of line search here to find the amount to go this direction
-    #implement levenberg-marquardt addition
-    c = .3
-
-    #increment & append
-    new_params = (x[0] - delta[0]*c, x[1] - delta[1]*c); params.append(new_params)
-    print('we made it'); print(params)
+    #keep from going negative, could implement a line search here
+    for j, X in enumerate(x):
+        if (X - delta[j]*.7) > 0:
+            new_params.append(x[j] - delta[j]*.7)
+        else:
+            new_params.append(x[j] + delta[j]*.7)
+    params.append(new_params)
 
     newobj_sub = obj.subs([(eps, new_params[0]), (sig, new_params[1])])
     print('new residual calcualted')
+    print(x); print(new_params)
 
-    #check for parameter convergence
-    conv_criteria = obj_sub - newobj_sub; conv_criteria = [conv_criteria[i] / r2 for i, r2 in enumerate(obj_sub)]
+    #conv_criteria = obj_sub - newobj_sub; conv_criteria = [conv_criteria[i] / r2 for i, r2 in enumerate(obj_sub)]
+    conv_criteria = [abs((X - new_params[i])/X) for i, X in enumerate(x)]
     print(conv_criteria)
 
-    #is this best way to track convergence? this is m-dimensional (# files)
-    if sum(absolute(conv_criteria)) < 0.0001:  #convergence achieved
-        print('epsilon: ' + str(new_params[0]) + '\tsigma: ' + str(new_params[1]))
+    if all(np.absolute(conv) < 0.05 for conv in conv_criteria):
         break
-    print('end of loop')
 
 # use mixing rules to extract sotolon sigma and epsilon at the end
